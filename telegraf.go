@@ -64,7 +64,6 @@ func WriteResultTelegraf(w io.Writer, r *Result, opts *TelegrafOptions) error {
 		tags["target"] = r.Config.RemoteAddress
 	}
 
-	tags["status"] = "success"
 	tagStr := buildTelegrafTagString(tags)
 
 	// Write status metric
@@ -175,18 +174,10 @@ func WriteTelegrafError(w io.Writer, err error, target string, opts *TelegrafOpt
 		tags["target"] = target
 	}
 
-	tags["status"] = "failed"
 	tagStr := buildTelegrafTagString(tags)
 
-	// Escape error message for field value
-	errorMsg := strings.ReplaceAll(err.Error(), "\"", "\\\"")
-	errorMsg = strings.ReplaceAll(errorMsg, "\n", " ")
-
-	// Strip common prefixes to make error message cleaner
-	errorMsg = strings.TrimPrefix(errorMsg, "Error: ")
-
-	// Create metric with error information
-	fmt.Fprintf(w, "%s%s success=0i,error=\"%s\" %d\n", telegrafMeasurement, tagStr, errorMsg, timestamp)
+	// Create metric with failure status
+	fmt.Fprintf(w, "%s%s success=0i %d\n", telegrafMeasurement, tagStr, timestamp)
 
 	return nil
 }
