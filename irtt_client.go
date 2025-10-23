@@ -30,12 +30,21 @@ func clientUsage() {
 	printf("               increased as necessary for irtt headers, common values:")
 	printf("               1472 (max unfragmented size of IPv4 datagram for 1500 byte MTU)")
 	printf("               1452 (max unfragmented size of IPv6 datagram for 1500 byte MTU)")
-	printf("-o file        write JSON output to file (use '-' for stdout)")
-	printf("               if file has no extension, .json.gz is added, output is gzipped")
-	printf("               if extension is .json.gz, output is gzipped")
-	printf("               if extension is .gz, it's changed to .json.gz, output is gzipped")
-	printf("               if extension is .json, output is not gzipped")
-	printf("               output to stdout is not gzipped, pipe to gzip if needed")
+	printf("-o file        write output to file (use '-' for stdout)")
+	printf("               for JSON format:")
+	printf("                 if file has no extension, .json.gz is added, output is gzipped")
+	printf("                 if extension is .json.gz, output is gzipped")
+	printf("                 if extension is .gz, it's changed to .json.gz, output is gzipped")
+	printf("                 if extension is .json, output is not gzipped")
+	printf("                 output to stdout is not gzipped, pipe to gzip if needed")
+	printf("               for telegraf format:")
+	printf("                 output written as-is (no compression)")
+	printf("--format=fmt   output format: json or telegraf (default json)")
+	printf("               json: JSON format (original IRTT output)")
+	printf("               telegraf: InfluxDB line protocol for Telegraf")
+	printf("--telegraf-tags=tags")
+	printf("               comma-separated tags for telegraf output (key=value,key=value)")
+	printf("               example: --telegraf-tags=site=dc1,env=prod")
 	printf("-q             quiet, suppress per-packet output")
 	printf("-Q             really quiet, suppress all output except errors to stderr")
 	printf("-n             no test, connect to the server and validate test parameters")
@@ -160,6 +169,8 @@ func runClientCLI(args []string) {
 	var tsatStr = fs.String("tstamp", DefaultStampAt.String(), "stamp at")
 	var clockStr = fs.String("clock", DefaultClock.String(), "clock")
 	var outputStr = fs.StringP("o", "o", "", "output file")
+	var outputFormat = fs.String("format", "json", "output format (json or telegraf)")
+	var telegrafTags = fs.String("telegraf-tags", "", "telegraf tags (key=value,key=value)")
 	var quiet = fs.BoolP("q", "q", defaultQuiet, "quiet")
 	var reallyQuiet = fs.BoolP("Q", "Q", defaultReallyQuiet, "really quiet")
 	var dscpStr = fs.String("dscp", strconv.Itoa(DefaultDSCP), "dscp value")
@@ -321,6 +332,23 @@ func runClientCLI(args []string) {
 	c := NewClient(cfg)
 	r, err := c.Run(ctx)
 	if err != nil {
+		// If Telegraf output requested, output failure metric instead of exiting with error
+		if *outputStr != "" && *outputFormat == "telegraf" {
+			// Parse telegraf tags
+			opts := DefaultTelegrafOptions()
+			if *telegrafTags != "" {
+				for _, pair := range strings.Split(*telegrafTags, ",") {
+					parts := strings.SplitN(pair, "=", 2)
+					if len(parts) == 2 {
+						opts.Tags[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			if writeErr := writeResultTelegrafError(err, cfg.RemoteAddress, *outputStr, opts); writeErr != nil {
+				exitOnError(writeErr, exitCodeRuntimeError)
+			}
+			os.Exit(0) // Exit successfully so Telegraf doesn't fail
+		}
 		exitOnError(err, exitCodeRuntimeError)
 	}
 
@@ -334,10 +362,30 @@ func runClientCLI(args []string) {
 		printResult(r)
 	}
 
-	// write results to JSON
+	// write results in requested format
 	if *outputStr != "" {
-		if err := writeResultJSON(r, *outputStr, ctx.Err() != nil); err != nil {
-			exitOnError(err, exitCodeRuntimeError)
+		switch *outputFormat {
+		case "telegraf":
+			// Parse telegraf tags
+			opts := DefaultTelegrafOptions()
+			if *telegrafTags != "" {
+				for _, pair := range strings.Split(*telegrafTags, ",") {
+					parts := strings.SplitN(pair, "=", 2)
+					if len(parts) == 2 {
+						opts.Tags[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			if err := writeResultTelegraf(r, *outputStr, opts); err != nil {
+				exitOnError(err, exitCodeRuntimeError)
+			}
+		case "json":
+			if err := writeResultJSON(r, *outputStr, ctx.Err() != nil); err != nil {
+				exitOnError(err, exitCodeRuntimeError)
+			}
+		default:
+			exitOnError(fmt.Errorf("unknown output format: %s (use 'json' or 'telegraf')", *outputFormat),
+				exitCodeBadCommandLine)
 		}
 	}
 }
@@ -455,6 +503,40 @@ func writeResultJSON(r *Result, output string, cancelled bool) error {
 	e := json.NewEncoder(jout)
 	e.SetIndent("", "    ")
 	return e.Encode(r)
+}
+
+func writeResultTelegraf(r *Result, output string, opts *TelegrafOptions) error {
+	var tout io.Writer
+
+	if output == "-" {
+		tout = os.Stdout
+	} else {
+		of, err := os.Create(output)
+		if err != nil {
+			return err
+		}
+		defer of.Close()
+		tout = of
+	}
+
+	return WriteResultTelegraf(tout, r, opts)
+}
+
+func writeResultTelegrafError(err error, target string, output string, opts *TelegrafOptions) error {
+	var tout io.Writer
+
+	if output == "-" {
+		tout = os.Stdout
+	} else {
+		of, err := os.Create(output)
+		if err != nil {
+			return err
+		}
+		defer of.Close()
+		tout = of
+	}
+
+	return WriteTelegrafError(tout, err, target, opts)
 }
 
 type clientHandler struct {
