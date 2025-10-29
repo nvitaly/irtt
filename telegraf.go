@@ -58,86 +58,84 @@ func WriteResultTelegraf(w io.Writer, r *Result, opts *TelegrafOptions) error {
 
 	timestamp := time.Now().Unix()
 
-	// Build tags
-	tags := make(map[string]string)
+	// Build flat map with all data
+	flat := make(map[string]interface{})
+
+	// Add timestamp
+	flat["timestamp"] = timestamp
+
+	// Add all tags
 	for k, v := range opts.Tags {
-		tags[k] = v
+		flat[k] = v
 	}
 
 	// Add target tag
 	if r.Config != nil && r.Config.RemoteAddress != "" {
-		tags["target"] = r.Config.RemoteAddress
+		flat["target"] = r.Config.RemoteAddress
 	}
 
-	// Build fields map
-	fields := make(map[string]interface{})
-	fields["success"] = 1
+	// Add success field
+	flat["success"] = 1
 
 	// RTT statistics
 	if opts.IncludeRTT {
-		addDurationStatsToFields(fields, "rtt", &stats.RTTStats)
+		addDurationStatsToFields(flat, "rtt", &stats.RTTStats)
 	}
 
 	// Send delay statistics
 	if opts.IncludeSendDelay {
-		addDurationStatsToFields(fields, "send_delay", &stats.SendDelayStats)
+		addDurationStatsToFields(flat, "send_delay", &stats.SendDelayStats)
 	}
 
 	// Receive delay statistics
 	if opts.IncludeReceiveDelay {
-		addDurationStatsToFields(fields, "receive_delay", &stats.ReceiveDelayStats)
+		addDurationStatsToFields(flat, "receive_delay", &stats.ReceiveDelayStats)
 	}
 
 	// IPDV (jitter) statistics
 	if opts.IncludeIPDV {
-		addDurationStatsToFields(fields, "ipdv_rtt", &stats.RoundTripIPDVStats)
-		addDurationStatsToFields(fields, "ipdv_send", &stats.SendIPDVStats)
-		addDurationStatsToFields(fields, "ipdv_receive", &stats.ReceiveIPDVStats)
+		addDurationStatsToFields(flat, "ipdv_rtt", &stats.RoundTripIPDVStats)
+		addDurationStatsToFields(flat, "ipdv_send", &stats.SendIPDVStats)
+		addDurationStatsToFields(flat, "ipdv_receive", &stats.ReceiveIPDVStats)
 	}
 
 	// Server processing time
 	if opts.IncludeServerProcessing {
-		addDurationStatsToFields(fields, "server_processing", &stats.ServerProcessingTimeStats)
+		addDurationStatsToFields(flat, "server_processing", &stats.ServerProcessingTimeStats)
 	}
 
 	// Packet loss statistics
 	if opts.IncludePacketLoss {
-		fields["packets_sent"] = stats.PacketsSent
-		fields["packets_received"] = stats.PacketsReceived
-		fields["packet_loss_percent"] = stats.PacketLossPercent
-		fields["upstream_loss_percent"] = stats.UpstreamLossPercent
-		fields["downstream_loss_percent"] = stats.DownstreamLossPercent
-		fields["duplicates"] = stats.Duplicates
-		fields["duplicate_percent"] = stats.DuplicatePercent
-		fields["late_packets"] = stats.LatePackets
-		fields["late_packets_percent"] = stats.LatePacketsPercent
+		flat["packets_sent"] = stats.PacketsSent
+		flat["packets_received"] = stats.PacketsReceived
+		flat["packet_loss_percent"] = stats.PacketLossPercent
+		flat["upstream_loss_percent"] = stats.UpstreamLossPercent
+		flat["downstream_loss_percent"] = stats.DownstreamLossPercent
+		flat["duplicates"] = stats.Duplicates
+		flat["duplicate_percent"] = stats.DuplicatePercent
+		flat["late_packets"] = stats.LatePackets
+		flat["late_packets_percent"] = stats.LatePacketsPercent
 	}
 
 	// Bitrate statistics
 	if opts.IncludeBitrate {
-		fields["send_rate_bps"] = uint64(stats.SendRate)
-		fields["receive_rate_bps"] = uint64(stats.ReceiveRate)
-		fields["bytes_sent"] = stats.BytesSent
-		fields["bytes_received"] = stats.BytesReceived
+		flat["send_rate_bps"] = uint64(stats.SendRate)
+		flat["receive_rate_bps"] = uint64(stats.ReceiveRate)
+		flat["bytes_sent"] = stats.BytesSent
+		flat["bytes_received"] = stats.BytesReceived
 	}
 
 	// Timer error statistics
 	if opts.IncludeTimerError {
-		addDurationStatsToFields(fields, "timer_error", &stats.TimerErrorStats)
-		fields["timer_err_percent"] = stats.TimerErrPercent
-		fields["timer_misses"] = stats.TimerMisses
-		fields["timer_miss_percent"] = stats.TimerMissPercent
+		addDurationStatsToFields(flat, "timer_error", &stats.TimerErrorStats)
+		flat["timer_err_percent"] = stats.TimerErrPercent
+		flat["timer_misses"] = stats.TimerMisses
+		flat["timer_miss_percent"] = stats.TimerMissPercent
 	}
 
-	// Create metric and write as JSON
-	metric := TelegrafMetric{
-		Fields:    fields,
-		Tags:      tags,
-		Timestamp: timestamp,
-	}
-
+	// Write flat map as JSON
 	encoder := json.NewEncoder(w)
-	return encoder.Encode(metric)
+	return encoder.Encode(flat)
 }
 
 // WriteTelegrafError writes an error in JSON format for Telegraf
@@ -148,30 +146,27 @@ func WriteTelegrafError(w io.Writer, err error, target string, opts *TelegrafOpt
 
 	timestamp := time.Now().Unix()
 
-	// Build tags
-	tags := make(map[string]string)
+	// Build flat map with all data
+	flat := make(map[string]interface{})
+
+	// Add timestamp
+	flat["timestamp"] = timestamp
+
+	// Add all tags
 	for k, v := range opts.Tags {
-		tags[k] = v
+		flat[k] = v
 	}
 
 	if target != "" {
-		tags["target"] = target
+		flat["target"] = target
 	}
 
-	// Build fields with failure status
-	fields := map[string]interface{}{
-		"success": 0,
-	}
+	// Add failure status
+	flat["success"] = 0
 
-	// Create metric and write as JSON
-	metric := TelegrafMetric{
-		Fields:    fields,
-		Tags:      tags,
-		Timestamp: timestamp,
-	}
-
+	// Write flat map as JSON
 	encoder := json.NewEncoder(w)
-	return encoder.Encode(metric)
+	return encoder.Encode(flat)
 }
 
 // addDurationStatsToFields adds duration statistics to the fields map
